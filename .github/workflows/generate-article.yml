@@ -30,7 +30,7 @@ jobs:
           WP_URL: ${{ secrets.WP_URL }}
           WP_USER: ${{ secrets.WP_USER }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
-        run: node --import tsx/esm scripts/generate-article.ts
+        run: npx tsx scripts/generate-article.ts
 
       - name: 投稿済みスラッグをコミット
         run: |
