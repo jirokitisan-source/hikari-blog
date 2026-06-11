@@ -2,8 +2,9 @@ name: 記事自動生成
 
 on:
   schedule:
-    # 毎日 JST 9:00 (UTC 0:00) に実行
+    # 毎日 JST 9:00 (UTC 0:00) と 21:00 (UTC 12:00) に実行
     - cron: "0 0 * * *"
+    - cron: "0 12 * * *"
   workflow_dispatch:
 
 jobs:

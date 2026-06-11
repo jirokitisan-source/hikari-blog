@@ -4,6 +4,40 @@ import fs from "fs";
 import path from "path";
 import matter from "gray-matter";
 
+async function fetchAndUploadImage(slug: string, title: string): Promise<number | null> {
+  try {
+    // seedにスラッグを使うことで同じ記事は同じ画像になる
+    const imageUrl = `https://picsum.photos/seed/${slug}/1200/630`;
+
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
+    const buffer = await imgRes.arrayBuffer();
+
+    // WordPress メディアライブラリにアップロード
+    const filename = `${slug}.jpg`;
+    const uploadRes = await fetch(`${WP_URL}/wp-json/wp/v2/media`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${wpAuth}`,
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Type": "image/jpeg",
+      },
+      body: buffer,
+    });
+
+    if (!uploadRes.ok) {
+      const err = await uploadRes.text();
+      throw new Error(`Upload failed: ${err.slice(0, 100)}`);
+    }
+    const media = await uploadRes.json() as { id: number };
+    console.log(`画像アップロード完了: ID ${media.id}`);
+    return media.id;
+  } catch (e) {
+    console.log(`画像取得失敗、スキップします: ${e}`);
+    return null;
+  }
+}
+
 type KeywordEntry = { keyword: string; slug: string };
 
 const KEYWORDS_FILE = path.join(process.cwd(), "scripts/keywords.json");
@@ -32,15 +66,39 @@ function inferCategory(slug: string): number {
   return 9; // デフォルトはプロバイダ比較
 }
 
-function getPostedSlugs(): Set<string> {
-  if (!fs.existsSync(POSTED_FILE)) return new Set();
-  return new Set(JSON.parse(fs.readFileSync(POSTED_FILE, "utf-8")));
+type PostedEntry = { slug: string; title: string };
+
+function getPostedEntries(): PostedEntry[] {
+  if (!fs.existsSync(POSTED_FILE)) return [];
+  const data = JSON.parse(fs.readFileSync(POSTED_FILE, "utf-8"));
+  // 旧フォーマット（配列of文字列）との互換性
+  if (typeof data[0] === "string") return [];
+  return data as PostedEntry[];
 }
 
-function savePostedSlug(slug: string) {
-  const slugs = getPostedSlugs();
-  slugs.add(slug);
-  fs.writeFileSync(POSTED_FILE, JSON.stringify([...slugs], null, 2), "utf-8");
+function getPostedSlugs(): Set<string> {
+  if (!fs.existsSync(POSTED_FILE)) return new Set();
+  const data = JSON.parse(fs.readFileSync(POSTED_FILE, "utf-8"));
+  if (typeof data[0] === "string") return new Set(data);
+  return new Set((data as PostedEntry[]).map((e) => e.slug));
+}
+
+function savePostedEntry(slug: string, title: string) {
+  const entries = getPostedEntries();
+  entries.push({ slug, title });
+  fs.writeFileSync(POSTED_FILE, JSON.stringify(entries, null, 2), "utf-8");
+}
+
+function buildInternalLinksSection(entries: PostedEntry[]): string {
+  if (entries.length === 0) return "";
+  const links = entries
+    .slice(-10) // 直近10記事から関連リンクを選ばせる
+    .map((e) => `- [${e.title}](${WP_URL}/${e.slug}/)`)
+    .join("\n");
+  return `\n\n## 内部リンク指示（本文中に自然に組み込むこと・このセクション自体は出力しない）
+記事本文の適切な箇所に、以下の関連記事へのリンクを2〜3個、自然な文脈で挿入してください。
+リンクは「詳しくはこちら」のような不自然な挿入ではなく、文章の流れに沿った形で入れてください。
+${links}`;
 }
 
 function getUnwrittenKeyword(): KeywordEntry | null {
@@ -49,7 +107,8 @@ function getUnwrittenKeyword(): KeywordEntry | null {
   return keywords.find((k) => !posted.has(k.slug)) ?? null;
 }
 
-function buildPrompt(keyword: string): string {
+function buildPrompt(keyword: string, existingEntries: PostedEntry[]): string {
+  const internalLinksSection = buildInternalLinksSection(existingEntries);
   return `あなたは「光回線の教科書」というブログの著者です。
 10年以上インターネット回線を使い比べてきた経験をもとに、「初めてでも失敗しない」をコンセプトに記事を書いています。
 「教科書」らしく正確でわかりやすく、でも堅苦しくない。です・ます調で、読者に語りかけるような親しみやすい文体が持ち味です。
@@ -110,24 +169,28 @@ tags: ["光回線", "インターネット回線"]
 
 ## その他
 - **総文字数：4,000文字以上**（これを下回る記事は失格）
-- アフィリエイトリンクのプレースホルダーとして [PR] を自然な箇所に配置`;
+- アフィリエイトリンクのプレースホルダーとして [PR] を自然な箇所に配置
+${internalLinksSection}`;
 }
 
-async function postToWordPress(title: string, htmlContent: string, excerpt: string, slug: string) {
+async function postToWordPress(title: string, htmlContent: string, excerpt: string, slug: string, featuredMediaId: number | null) {
+  const body: Record<string, unknown> = {
+    title,
+    content: htmlContent,
+    excerpt,
+    slug,
+    status: "publish",
+    categories: [inferCategory(slug)],
+  };
+  if (featuredMediaId) body.featured_media = featuredMediaId;
+
   const res = await fetch(`${WP_URL}/wp-json/wp/v2/posts`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Basic ${wpAuth}`,
     },
-    body: JSON.stringify({
-      title,
-      content: htmlContent,
-      excerpt,
-      slug,
-      status: "publish",
-      categories: [inferCategory(slug)],
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -210,11 +273,12 @@ async function generateArticle() {
 
   console.log(`生成中: "${entry.keyword}"`);
 
+  const existingEntries = getPostedEntries();
   const client = new Anthropic();
   const message = await client.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 8192,
-    messages: [{ role: "user", content: buildPrompt(entry.keyword) }],
+    messages: [{ role: "user", content: buildPrompt(entry.keyword, existingEntries) }],
   });
 
   const raw = (message.content[0] as { type: string; text: string }).text;
@@ -232,9 +296,13 @@ async function generateArticle() {
     : content + "\n\n> ※本記事の情報は2026年時点のものです。最新の料金・キャンペーンは各公式サイトをご確認ください。";
 
   const htmlContent = await marked(finalContent);
-  const post = await postToWordPress(data.title, htmlContent, data.description, entry.slug);
 
-  savePostedSlug(entry.slug);
+  // アイキャッチ画像を取得・アップロード
+  const featuredMediaId = await fetchAndUploadImage(entry.slug, data.title);
+
+  const post = await postToWordPress(data.title, htmlContent, data.description, entry.slug, featuredMediaId);
+
+  savePostedEntry(entry.slug, data.title);
   console.log(`投稿完了: ${post.link} (ID: ${post.id})`);
 }
 

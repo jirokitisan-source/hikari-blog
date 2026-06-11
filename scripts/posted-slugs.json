@@ -1,6 +1,30 @@
 [
-  "hikari-osusume-2026",
-  "hikari-mansion-hikaku",
-  "hikari-kodate-hikaku",
-  "flets-vs-hikari-collabo"
+  {
+    "slug": "flets-vs-hikari-collabo",
+    "title": "フレッツ光 vs 光コラボ、結局どっちが得なの？"
+  },
+  {
+    "slug": "hikari-kodate-hikaku",
+    "title": "光回線を戸建てで選ぶなら？おすすめ5選と失敗しない選び方"
+  },
+  {
+    "slug": "hikari-mansion-hikaku",
+    "title": "マンションの光回線比較！本当に速くて安いのはどれ？"
+  },
+  {
+    "slug": "hikari-osusume-2026",
+    "title": "光回線おすすめ2026年版｜失敗しない選び方と比較"
+  },
+  {
+    "slug": "docomo-hikari-hyoban",
+    "title": "ドコモ光の評判は本当？メリット・デメリット全部教えます"
+  },
+  {
+    "slug": "au-hikari-hyoban",
+    "title": "auひかりの評判は本当？メリット・デメリット全部教えます"
+  },
+  {
+    "slug": "softbank-hikari-hyoban",
+    "title": "ソフトバンク光の評判は本当？メリット・デメリット全解説"
+  }
 ]
